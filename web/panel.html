@@ -33,7 +33,7 @@
 <body>
   <header>
     <h1>Panel de Control Remoto</h1>
-    <span class="ayuda">Controlá hasta 2 PCs. En cada una abrí la app y elegí "Permitir que controlen ESTA PC", después poné su IP y clave acá.</span>
+    <span class="ayuda">Controlá hasta 2 PCs. En cada una abrí la app y elegí "Permitir que controlen ESTA PC". Por internet usá la IP de Tailscale (100.x); en tu red local, la IP local. Después poné la IP y la clave acá.</span>
   </header>
   <div class="grid" id="grid"></div>
 
@@ -56,7 +56,7 @@ for (let i = 0; i < 2; i++) {
   pc.className = "pc";
   pc.innerHTML = `
     <div class="cab">
-      <input class="ip" placeholder="IP de la PC (ej: 192.168.1.50:7070)" value="${ips[i] || ""}">
+      <input class="ip" placeholder="IP de la PC (Tailscale 100.x o local 192.168.x)" value="${ips[i] || ""}">
       <button class="conectar">Conectar</button>
       <button class="cerrar" style="display:none">Cerrar</button>
     </div>

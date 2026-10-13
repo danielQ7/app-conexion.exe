@@ -1,11 +1,34 @@
 # Conexión Remota (uso personal)
 
-App tipo AnyDesk para **red local**: controlá hasta **2 PCs** desde una, viendo la
-pantalla y manejando el mouse y el teclado. Es un **solo `.exe`** para Windows, sin
-instalar nada en las PCs (no usa internet ni servidores externos).
+App tipo AnyDesk para controlar hasta **2 PCs** desde una, viendo la pantalla y
+manejando el mouse y el teclado. Es un **solo `.exe`** para Windows, sin instalar
+nada aparte de la propia app.
 
-> Pensada para controlar tus propias PCs en tu propia red (LAN/WiFi de casa). No
-> es para acceder a equipos ajenos.
+Funciona en dos escenarios:
+
+- **Misma red (WiFi/LAN de casa):** directo, usás la IP local (192.168.x).
+- **Redes distintas (por internet):** con **Tailscale** (ver abajo), usás la IP de
+  Tailscale (100.x). Es la forma recomendada para tus propias PCs: gratis, cifrada
+  y sin tocar el router.
+
+> Pensada para controlar **tus propias PCs**. No es para acceder a equipos ajenos.
+
+## Controlar por INTERNET (PCs en redes distintas) — con Tailscale
+
+Dos PCs en WiFis diferentes no se ven entre sí porque cada router las esconde
+detrás de NAT. Tailscale crea una red privada segura (VPN WireGuard) **entre tus
+propias PCs**, por internet, sin configurar el router.
+
+1. Instalá **Tailscale** en las 2 (o 3) PCs: https://tailscale.com/download
+2. Iniciá sesión en todas con **la misma cuenta** (Google, Microsoft, etc.).
+3. En cada PC, Tailscale le da una IP fija tipo `100.x.y.z` (la ves en la app de
+   Tailscale, o con `tailscale ip`). Esa IP funciona desde cualquier lugar.
+4. Usá la app igual que abajo, pero en el panel poné la **IP de Tailscale** de la
+   otra PC en vez de la IP local. (Cuando compartís una PC, la app te muestra su
+   IP de Tailscale etiquetada como "INTERNET".)
+
+Ventaja: solo tus equipos con tu cuenta pueden verse; el tráfico va cifrado por
+Tailscale aunque estés en otra ciudad o en datos del celular.
 
 ## Cómo se usa
 
@@ -40,8 +63,10 @@ clave adentro.
 
 - El acceso pide **clave**; tras 5 intentos fallidos se bloquea esa IP 1 minuto.
 - El **panel** de control solo escucha en `127.0.0.1` (no se expone a la red).
-- Es tráfico **sin cifrar** dentro de la LAN: usala en una red de confianza (tu
-  casa), no en WiFi públicas.
+- **Por internet usá Tailscale**: así el tráfico va cifrado y solo tus equipos se
+  ven entre sí. La app en sí manda los datos sin cifrar, por eso **no** conviene
+  abrir el puerto 7070 directo a internet; dejá que Tailscale (o tu LAN de
+  confianza) sea el único camino.
 
 ## Compilar desde el código (solo si querés rehacer el `.exe`)
 

@@ -168,8 +168,15 @@ func iniciarServidor(puerto int, clave string) {
 	fmt.Println(" ESTA PC SE PUEDE CONTROLAR")
 	fmt.Println("------------------------------------------")
 	fmt.Printf(" Nombre:   %s  (pantalla %dx%d)\n", nombre, ancho, alto)
+	ipsTS := ipsTailscale()
+	for _, ip := range ipsTS {
+		fmt.Printf(" INTERNET (Tailscale): %s  ->  usá esta IP en la otra PC\n", ip)
+	}
 	for _, ip := range ipsLocales() {
-		fmt.Printf(" IP:       %s   ->  http://%s:%d\n", ip, ip, puerto)
+		fmt.Printf(" Red local: %s   ->  http://%s:%d\n", ip, ip, puerto)
+	}
+	if len(ipsTS) == 0 {
+		fmt.Println(" (Para controlar por INTERNET instalá Tailscale en las 2 PCs; ver README)")
 	}
 	fmt.Printf(" Clave:    %s\n", clave)
 	fmt.Println(" Cerrá esta ventana para dejar de compartir.")
@@ -383,6 +390,28 @@ func ipsLocales() []string {
 	}
 	if len(ips) == 0 {
 		ips = append(ips, "127.0.0.1")
+	}
+	return ips
+}
+
+// ipsTailscale devuelve las IPs del rango de Tailscale (100.64.0.0/10),
+// que son las que sirven para controlar la PC por internet.
+func ipsTailscale() []string {
+	_, red, _ := net.ParseCIDR("100.64.0.0/10")
+	var ips []string
+	ifaces, _ := net.Interfaces()
+	for _, ifc := range ifaces {
+		if ifc.Flags&net.FlagUp == 0 {
+			continue
+		}
+		addrs, _ := ifc.Addrs()
+		for _, a := range addrs {
+			if ipn, ok := a.(*net.IPNet); ok {
+				if ip4 := ipn.IP.To4(); ip4 != nil && red.Contains(ip4) {
+					ips = append(ips, ip4.String())
+				}
+			}
+		}
 	}
 	return ips
 }
