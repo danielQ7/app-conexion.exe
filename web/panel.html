@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel de Control Remoto</title>
+<style>
+  :root { --fondo:#0d1117; --barra:#161b22; --texto:#e6e6e6; --acento:#2f81f7; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; background:var(--fondo); color:var(--texto);
+    font:14px system-ui, sans-serif; }
+  header { padding:10px 16px; background:var(--barra); display:flex; align-items:center; gap:14px; }
+  header h1 { margin:0; font-size:16px; }
+  header .ayuda { font-size:12px; color:#8b949e; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:10px;
+    height:calc(100% - 44px); }
+  @media (max-width:800px){ .grid { grid-template-columns:1fr; } }
+  .pc { display:flex; flex-direction:column; background:#000; border-radius:8px;
+    overflow:hidden; border:1px solid #30363d; min-height:0; }
+  .pc .cab { display:flex; gap:8px; align-items:center; padding:6px 8px; background:var(--barra); }
+  .pc .cab input { flex:1; font:inherit; padding:5px 8px; border-radius:5px;
+    border:1px solid #30363d; background:#0d1117; color:var(--texto); }
+  .pc .cab input.clave { max-width:120px; }
+  .pc .cab button { font:inherit; padding:5px 10px; border:0; border-radius:5px;
+    background:var(--acento); color:#fff; cursor:pointer; font-weight:600; }
+  .pc .cab button.cerrar { background:#6e7681; }
+  .pc .marco { flex:1; min-height:0; }
+  .pc iframe { width:100%; height:100%; border:0; background:#000; }
+  .pc .vacio { flex:1; display:flex; align-items:center; justify-content:center;
+    color:#6e7681; font-size:13px; text-align:center; padding:16px; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Panel de Control Remoto</h1>
+    <span class="ayuda">Controlá hasta 2 PCs. En cada una abrí la app y elegí "Permitir que controlen ESTA PC", después poné su IP y clave acá.</span>
+  </header>
+  <div class="grid" id="grid"></div>
+
+<script>
+const grid = document.getElementById("grid");
+const GUARDADO = "conexion_pcs";
+
+function cargar() {
+  try { return JSON.parse(localStorage.getItem(GUARDADO)) || ["", ""]; }
+  catch (e) { return ["", ""]; }
+}
+function guardar(ips) {
+  try { localStorage.setItem(GUARDADO, JSON.stringify(ips)); } catch (e) {}
+}
+
+const ips = cargar();
+
+for (let i = 0; i < 2; i++) {
+  const pc = document.createElement("div");
+  pc.className = "pc";
+  pc.innerHTML = `
+    <div class="cab">
+      <input class="ip" placeholder="IP de la PC (ej: 192.168.1.50:7070)" value="${ips[i] || ""}">
+      <button class="conectar">Conectar</button>
+      <button class="cerrar" style="display:none">Cerrar</button>
+    </div>
+    <div class="vacio">PC ${i + 1}: escribí la IP y tocá Conectar.</div>`;
+  grid.appendChild(pc);
+
+  const inputIp = pc.querySelector(".ip");
+  const btn = pc.querySelector(".conectar");
+  const btnCerrar = pc.querySelector(".cerrar");
+  const vacio = pc.querySelector(".vacio");
+
+  function conectar() {
+    let ip = inputIp.value.trim();
+    if (!ip) return;
+    if (!/:\d+$/.test(ip)) ip += ":7070";
+    ips[i] = inputIp.value.trim();
+    guardar(ips);
+    vacio.remove ? null : null;
+    const marco = document.createElement("div");
+    marco.className = "marco";
+    const frame = document.createElement("iframe");
+    frame.src = "http://" + ip + "/";
+    marco.appendChild(frame);
+    const existente = pc.querySelector(".vacio, .marco");
+    if (existente) existente.replaceWith(marco);
+    btn.style.display = "none";
+    btnCerrar.style.display = "";
+  }
+
+  function cerrar() {
+    const existente = pc.querySelector(".marco");
+    if (existente) {
+      const vac = document.createElement("div");
+      vac.className = "vacio";
+      vac.textContent = `PC ${i + 1}: escribí la IP y tocá Conectar.`;
+      existente.replaceWith(vac);
+    }
+    btn.style.display = "";
+    btnCerrar.style.display = "none";
+  }
+
+  btn.addEventListener("click", conectar);
+  btnCerrar.addEventListener("click", cerrar);
+  inputIp.addEventListener("keydown", e => { if (e.key === "Enter") conectar(); });
+}
+</script>
+</body>
+</html>

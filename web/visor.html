@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conexión Remota</title>
+<style>
+  :root { --fondo:#111418; --barra:#1c2128; --texto:#e6e6e6; --acento:#2f81f7; --error:#f85149; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; background:var(--fondo); color:var(--texto);
+    font:14px system-ui, sans-serif; overflow:hidden; }
+  #login { display:flex; height:100%; align-items:center; justify-content:center; }
+  #login form { background:var(--barra); padding:24px; border-radius:10px; width:300px;
+    display:flex; flex-direction:column; gap:12px; }
+  #login h2 { margin:0; font-size:18px; }
+  input, select, button { font:inherit; padding:7px 10px; border-radius:6px;
+    border:1px solid #30363d; background:#0d1117; color:var(--texto); }
+  button { background:var(--acento); border:0; cursor:pointer; font-weight:600; }
+  button:hover { filter:brightness(1.1); }
+  .error { color:var(--error); min-height:1em; }
+  #app { display:none; flex-direction:column; height:100%; }
+  #barra { display:flex; align-items:center; gap:10px; padding:6px 10px; background:var(--barra); }
+  #barra .sep { flex:1; }
+  #barra label { display:flex; align-items:center; gap:4px; font-size:12px; }
+  #barra input[type=range] { width:90px; }
+  #pantalla { flex:1; display:flex; align-items:center; justify-content:center;
+    overflow:hidden; background:#000; }
+  #pantalla img { max-width:100%; max-height:100%; cursor:none; }
+  .punto { width:8px; height:8px; border-radius:50%; background:#3fb950; display:inline-block; }
+</style>
+</head>
+<body>
+  <div id="login">
+    <form id="formLogin">
+      <h2>Conectarse a esta PC</h2>
+      <input id="clave" type="password" placeholder="Clave de acceso" autocomplete="off" autofocus>
+      <button type="submit">Conectar</button>
+      <div class="error" id="errLogin"></div>
+    </form>
+  </div>
+
+  <div id="app">
+    <div id="barra">
+      <span class="punto"></span>
+      <strong id="nombre">PC</strong>
+      <span class="sep"></span>
+      <label>Calidad <input id="calidad" type="range" min="10" max="95" value="60"></label>
+      <label>Escala <input id="escala" type="range" min="25" max="100" value="100"></label>
+      <label>FPS <input id="fps" type="range" min="1" max="30" value="12"></label>
+      <label><input id="teclado" type="checkbox" checked> Teclado</label>
+      <button id="pantallaCompleta" type="button">Pantalla completa</button>
+    </div>
+    <div id="pantalla"><img id="video" alt="pantalla remota"></div>
+  </div>
+
+<script>
+const $ = s => document.querySelector(s);
+let token = "", ancho = 0, alto = 0;
+
+$("#formLogin").addEventListener("submit", async e => {
+  e.preventDefault();
+  $("#errLogin").textContent = "";
+  try {
+    const r = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clave: $("#clave").value })
+    });
+    if (!r.ok) { $("#errLogin").textContent = await r.text() || "Error"; return; }
+    const d = await r.json();
+    token = d.token; ancho = d.ancho; alto = d.alto;
+    $("#nombre").textContent = d.nombre + " (" + ancho + "x" + alto + ")";
+    $("#login").style.display = "none";
+    $("#app").style.display = "flex";
+    iniciar();
+  } catch (err) { $("#errLogin").textContent = "No se pudo conectar"; }
+});
+
+function urlStream() {
+  const q = new URLSearchParams({
+    t: token,
+    calidad: $("#calidad").value,
+    escala: $("#escala").value,
+    fps: $("#fps").value
+  });
+  return "/api/stream?" + q.toString();
+}
+
+function iniciar() {
+  const video = $("#video");
+  video.src = urlStream();
+  for (const id of ["calidad", "escala", "fps"]) {
+    $("#" + id).addEventListener("change", () => { video.src = urlStream(); });
+  }
+  conectarEntrada(video);
+  $("#pantallaCompleta").addEventListener("click", () => {
+    if (!document.fullscreenElement) $("#app").requestFullscreen();
+    else document.exitFullscreen();
+  });
+}
+
+// --- envío de mouse/teclado (en lote, cada ~30 ms) ---
+let cola = [];
+function enviar(ev) {
+  cola.push(ev);
+  if (cola.length > 100) cola.shift();
+}
+setInterval(async () => {
+  if (!cola.length || !token) return;
+  const lote = cola; cola = [];
+  try {
+    await fetch("/api/entrada", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Token": token },
+      body: JSON.stringify(lote)
+    });
+  } catch (e) {}
+}, 30);
+
+function coords(video, e) {
+  const r = video.getBoundingClientRect();
+  let x = (e.clientX - r.left) / r.width;
+  let y = (e.clientY - r.top) / r.height;
+  x = Math.min(1, Math.max(0, x));
+  y = Math.min(1, Math.max(0, y));
+  return { x, y };
+}
+
+function conectarEntrada(video) {
+  video.addEventListener("mousemove", e => {
+    const c = coords(video, e);
+    enviar({ t: "m", x: c.x, y: c.y });
+  });
+  video.addEventListener("mousedown", e => {
+    e.preventDefault();
+    const c = coords(video, e);
+    enviar({ t: "d", x: c.x, y: c.y, b: e.button });
+  });
+  video.addEventListener("mouseup", e => {
+    e.preventDefault();
+    const c = coords(video, e);
+    enviar({ t: "u", x: c.x, y: c.y, b: e.button });
+  });
+  video.addEventListener("contextmenu", e => e.preventDefault());
+  video.addEventListener("wheel", e => {
+    e.preventDefault();
+    enviar({ t: "w", d: e.deltaY > 0 ? -120 : 120 });
+  }, { passive: false });
+
+  window.addEventListener("keydown", e => {
+    if (!$("#teclado").checked) return;
+    e.preventDefault();
+    enviar({ t: "kd", k: e.keyCode, c: e.code });
+  });
+  window.addEventListener("keyup", e => {
+    if (!$("#teclado").checked) return;
+    e.preventDefault();
+    enviar({ t: "ku", k: e.keyCode, c: e.code });
+  });
+}
+</script>
+</body>
+</html>
