@@ -1,3 +1,5 @@
 /conexion-remota.exe
 *.exe
 clave.txt
+accesos.log
+.claude/

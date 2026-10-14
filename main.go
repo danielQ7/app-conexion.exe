@@ -7,6 +7,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"embed"
@@ -132,12 +133,25 @@ func tokenAleatorio() string {
 
 // ---------------------------------------------------------------- servidor (PC controlada)
 
+// Duración de las sesiones: se cierran tras un rato sin uso o, como máximo,
+// tras unas horas aunque se sigan usando (hay que volver a poner la clave).
+const (
+	sesionInactiva = 30 * time.Minute
+	sesionMaxima   = 12 * time.Hour
+)
+
+type sesion struct {
+	ip     string
+	creada time.Time
+	ultima time.Time
+}
+
 type servidor struct {
 	clave string
 
 	mu       sync.Mutex
-	tokens   map[string]string // token -> IP del cliente
-	fallos   map[string]int    // IP -> intentos fallidos
+	tokens   map[string]*sesion // token -> sesión del cliente
+	fallos   map[string]int     // IP -> intentos fallidos
 	bloqueos map[string]time.Time
 
 	entradaMu sync.Mutex // serializa el mouse/teclado entre los clientes
@@ -146,12 +160,13 @@ type servidor struct {
 func iniciarServidor(puerto int, clave string) {
 	s := &servidor{
 		clave:    clave,
-		tokens:   map[string]string{},
+		tokens:   map[string]*sesion{},
 		fallos:   map[string]int{},
 		bloqueos: map[string]time.Time{},
 	}
 	estatico, _ := fs.Sub(webFS, "web")
 	evitarSuspension()
+	go s.limpiarSesiones()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
@@ -184,8 +199,10 @@ func iniciarServidor(puerto int, clave string) {
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", puerto),
-		Handler:           mux,
+		Handler:           cabecerasSeguras(mux),
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    16 << 10,
 	}
 	if err := srv.ListenAndServe(); err != nil {
 		fmt.Println("ERROR al iniciar el servidor:", err)
@@ -205,6 +222,7 @@ func (s *servidor) login(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	if hasta, ok := s.bloqueos[ip]; ok && time.Now().Before(hasta) {
 		s.mu.Unlock()
+		registrar("BLOQUEADO: intento de acceso desde %s mientras estaba bloqueada", ip)
 		http.Error(w, "Demasiados intentos. Esperá un minuto.", http.StatusTooManyRequests)
 		return
 	}
@@ -220,23 +238,28 @@ func (s *servidor) login(w http.ResponseWriter, r *http.Request) {
 	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(datos.Clave)), []byte(s.clave)) != 1 {
 		s.mu.Lock()
 		s.fallos[ip]++
-		if s.fallos[ip] >= 5 {
+		bloqueada := s.fallos[ip] >= 5
+		if bloqueada {
 			s.bloqueos[ip] = time.Now().Add(time.Minute)
 			s.fallos[ip] = 0
 		}
 		s.mu.Unlock()
-		log.Printf("Clave incorrecta desde %s", ip)
+		registrar("Clave incorrecta desde %s", ip)
+		if bloqueada {
+			registrar("ALERTA: %s bloqueada 1 minuto por 5 claves incorrectas (posible intento de intrusión)", ip)
+		}
 		time.Sleep(500 * time.Millisecond)
 		http.Error(w, "Clave incorrecta", http.StatusUnauthorized)
 		return
 	}
 
 	token := tokenAleatorio()
+	ahora := time.Now()
 	s.mu.Lock()
-	s.tokens[token] = ip
+	s.tokens[token] = &sesion{ip: ip, creada: ahora, ultima: ahora}
 	delete(s.fallos, ip)
 	s.mu.Unlock()
-	log.Printf("CONECTADO: %s está controlando esta PC", ip)
+	registrar("CONECTADO: %s está controlando esta PC", ip)
 
 	ancho, alto := tamanoPantalla()
 	nombre, _ := os.Hostname()
@@ -247,17 +270,72 @@ func (s *servidor) login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *servidor) autorizado(r *http.Request) bool {
-	token := r.Header.Get("X-Token")
-	if token == "" {
-		token = r.URL.Query().Get("t")
-	}
+	token := tokenDe(r)
 	if token == "" {
 		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, ok := s.tokens[token]
-	return ok
+	ses, ok := s.tokens[token]
+	if !ok {
+		return false
+	}
+	// El token solo vale desde la IP que hizo login: si se filtra, no sirve en otra PC.
+	if ses.ip != ipCliente(r) {
+		registrar("ALERTA: token usado desde %s, pero pertenece a %s; acceso rechazado", ipCliente(r), ses.ip)
+		return false
+	}
+	if s.vencida(ses, time.Now()) {
+		delete(s.tokens, token)
+		registrar("Sesión de %s vencida", ses.ip)
+		return false
+	}
+	ses.ultima = time.Now()
+	return true
+}
+
+func tokenDe(r *http.Request) string {
+	if t := r.Header.Get("X-Token"); t != "" {
+		return t
+	}
+	return r.URL.Query().Get("t") // el <img> del stream no puede mandar cabeceras
+}
+
+func (s *servidor) vencida(ses *sesion, ahora time.Time) bool {
+	return ahora.Sub(ses.ultima) > sesionInactiva || ahora.Sub(ses.creada) > sesionMaxima
+}
+
+// mantenerViva renueva la sesión mientras se está mirando la pantalla.
+// Devuelve false si el token ya no existe o venció por tiempo máximo.
+func (s *servidor) mantenerViva(token string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ses, ok := s.tokens[token]
+	if !ok || s.vencida(ses, time.Now()) {
+		return false
+	}
+	ses.ultima = time.Now()
+	return true
+}
+
+// limpiarSesiones borra periódicamente las sesiones vencidas y los bloqueos viejos.
+func (s *servidor) limpiarSesiones() {
+	for range time.Tick(time.Minute) {
+		ahora := time.Now()
+		s.mu.Lock()
+		for t, ses := range s.tokens {
+			if s.vencida(ses, ahora) {
+				delete(s.tokens, t)
+				registrar("Sesión de %s vencida", ses.ip)
+			}
+		}
+		for ip, hasta := range s.bloqueos {
+			if ahora.After(hasta) {
+				delete(s.bloqueos, ip)
+			}
+		}
+		s.mu.Unlock()
+	}
 }
 
 func (s *servidor) stream(w http.ResponseWriter, r *http.Request) {
@@ -279,7 +357,27 @@ func (s *servidor) stream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Connection", "close")
 
-	enviarStream(r.Context(), w, flusher, calidad, escala, fps)
+	// Corta la transmisión si la sesión vence (o se cerró) mientras se mira.
+	ctx, cancelar := context.WithCancel(r.Context())
+	defer cancelar()
+	token := tokenDe(r)
+	go func() {
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if !s.mantenerViva(token) {
+					cancelar()
+					return
+				}
+			}
+		}
+	}()
+
+	enviarStream(ctx, w, flusher, calidad, escala, fps)
 }
 
 type evento struct {
@@ -343,7 +441,7 @@ func iniciarPanel(puerto int) {
 	fmt.Println(" Si no se abrió solo, copiá esa dirección en el navegador.")
 	fmt.Println("------------------------------------------")
 	abrirNavegador(url)
-	http.Serve(ln, mux)
+	http.Serve(ln, cabecerasPanel(mux))
 }
 
 func servirArchivo(w http.ResponseWriter, f fs.FS, nombre string) {
@@ -368,6 +466,67 @@ func abrirNavegador(url string) {
 		cmd = exec.Command("xdg-open", url)
 	}
 	_ = cmd.Start()
+}
+
+// ---------------------------------------------------------------- seguridad
+
+// cabecerasSeguras agrega cabeceras HTTP de protección a todas las respuestas.
+// El visor solo se puede mostrar dentro del panel local (127.0.0.1 / localhost),
+// así ninguna página de internet puede meterlo en un iframe para engañar al usuario.
+func cabecerasSeguras(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c := w.Header()
+		c.Set("Content-Security-Policy", "default-src 'self'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'self' http://127.0.0.1:* http://localhost:*")
+		c.Set("X-Content-Type-Options", "nosniff")
+		c.Set("Referrer-Policy", "no-referrer")
+		h.ServeHTTP(w, r)
+	})
+}
+
+// cabecerasPanel protege el panel local: no se puede meter en un iframe y solo
+// responde si se lo pide con 127.0.0.1/localhost (evita ataques de "DNS rebinding").
+func cabecerasPanel(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.Host)
+		if err != nil {
+			host = r.Host
+		}
+		if host != "127.0.0.1" && host != "localhost" {
+			http.Error(w, "acceso no permitido", http.StatusForbidden)
+			return
+		}
+		c := w.Header()
+		c.Set("Content-Security-Policy", "frame-ancestors 'none'")
+		c.Set("X-Content-Type-Options", "nosniff")
+		c.Set("Referrer-Policy", "no-referrer")
+		h.ServeHTTP(w, r)
+	})
+}
+
+var (
+	registroMu  sync.Mutex
+	registroLog *log.Logger
+)
+
+// registrar muestra el evento en la ventana y lo guarda en accesos.log (junto al
+// .exe), para poder revisar después quién se conectó o intentó entrar.
+func registrar(formato string, args ...any) {
+	msg := fmt.Sprintf(formato, args...)
+	log.Print(msg)
+	registroMu.Lock()
+	defer registroMu.Unlock()
+	if registroLog == nil {
+		exe, err := os.Executable()
+		if err != nil {
+			return
+		}
+		f, err := os.OpenFile(filepath.Join(filepath.Dir(exe), "accesos.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			return
+		}
+		registroLog = log.New(f, "", log.LstdFlags)
+	}
+	registroLog.Print(msg)
 }
 
 // ---------------------------------------------------------------- utilidades

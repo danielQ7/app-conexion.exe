@@ -55,7 +55,7 @@
 
 <script>
 const $ = s => document.querySelector(s);
-let token = "", ancho = 0, alto = 0;
+let token = "", ancho = 0, alto = 0, iniciado = false;
 
 $("#formLogin").addEventListener("submit", async e => {
   e.preventDefault();
@@ -89,8 +89,18 @@ function urlStream() {
 function iniciar() {
   const video = $("#video");
   video.src = urlStream();
+  if (iniciado) return;
+  iniciado = true;
+  // Si el stream se corta, se revisa si fue porque venció la sesión.
+  video.addEventListener("error", async () => {
+    if (!token) return;
+    const r = await fetch("/api/entrada", {
+      method: "POST", headers: { "Content-Type": "application/json", "X-Token": token }, body: "[]"
+    }).catch(() => null);
+    if (r && r.status === 401) sesionVencida();
+  });
   for (const id of ["calidad", "escala", "fps"]) {
-    $("#" + id).addEventListener("change", () => { video.src = urlStream(); });
+    $("#" + id).addEventListener("change", () => { if (token) video.src = urlStream(); });
   }
   conectarEntrada(video);
   $("#pantallaCompleta").addEventListener("click", () => {
@@ -109,13 +119,25 @@ setInterval(async () => {
   if (!cola.length || !token) return;
   const lote = cola; cola = [];
   try {
-    await fetch("/api/entrada", {
+    const r = await fetch("/api/entrada", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Token": token },
       body: JSON.stringify(lote)
     });
+    if (r.status === 401) sesionVencida();
   } catch (e) {}
 }, 30);
+
+// Si la sesión venció, se vuelve a pedir la clave.
+function sesionVencida() {
+  if (!token) return;
+  token = "";
+  $("#video").removeAttribute("src");
+  $("#app").style.display = "none";
+  $("#login").style.display = "flex";
+  $("#clave").value = "";
+  $("#errLogin").textContent = "La sesión venció. Volvé a poner la clave.";
+}
 
 function coords(video, e) {
   const r = video.getBoundingClientRect();

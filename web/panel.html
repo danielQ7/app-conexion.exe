@@ -56,7 +56,7 @@ for (let i = 0; i < 2; i++) {
   pc.className = "pc";
   pc.innerHTML = `
     <div class="cab">
-      <input class="ip" placeholder="IP de la PC (Tailscale 100.x o local 192.168.x)" value="${ips[i] || ""}">
+      <input class="ip" placeholder="IP de la PC (Tailscale 100.x o local 192.168.x)">
       <button class="conectar">Conectar</button>
       <button class="cerrar" style="display:none">Cerrar</button>
     </div>
@@ -64,6 +64,7 @@ for (let i = 0; i < 2; i++) {
   grid.appendChild(pc);
 
   const inputIp = pc.querySelector(".ip");
+  inputIp.value = ips[i] || ""; // como texto, nunca como HTML
   const btn = pc.querySelector(".conectar");
   const btnCerrar = pc.querySelector(".cerrar");
   const vacio = pc.querySelector(".vacio");
@@ -71,6 +72,8 @@ for (let i = 0; i < 2; i++) {
   function conectar() {
     let ip = inputIp.value.trim();
     if (!ip) return;
+    // Solo una IP o nombre de equipo, con puerto opcional (nada de rutas ni otros sitios).
+    if (!/^[A-Za-z0-9.\-]+(:\d{1,5})?$/.test(ip)) { alert("IP inválida"); return; }
     if (!/:\d+$/.test(ip)) ip += ":7070";
     ips[i] = inputIp.value.trim();
     guardar(ips);
