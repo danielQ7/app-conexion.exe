@@ -74,7 +74,7 @@ for (let i = 0; i < 2; i++) {
     if (!ip) return;
     // Solo una IP o nombre de equipo, con puerto opcional (nada de rutas ni otros sitios).
     if (!/^[A-Za-z0-9.\-]+(:\d{1,5})?$/.test(ip)) { alert("IP inválida"); return; }
-    if (!/:\d+$/.test(ip)) ip += ":7070";
+    if (!/:\d+$/.test(ip)) ip += ":7575";
     ips[i] = inputIp.value.trim();
     guardar(ips);
     vacio.remove ? null : null;

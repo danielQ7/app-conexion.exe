@@ -1,7 +1,7 @@
 // Conexión Remota: control remoto de PCs en red local (uso personal).
 //
 // Un solo .exe con dos modos:
-//   - servidor: comparte esta PC (pantalla + mouse + teclado) por HTTP en el puerto 7070.
+//   - servidor: comparte esta PC (pantalla + mouse + teclado) por HTTP en el puerto 7575.
 //   - panel:    abre en el navegador un panel para controlar hasta 2 PCs a la vez.
 package main
 
@@ -36,8 +36,8 @@ const maxPCs = 2
 
 func main() {
 	modo := flag.String("modo", "", "servidor | panel | ambos (si se omite, muestra un menú)")
-	puerto := flag.Int("puerto", 7070, "puerto del servidor (PC controlada)")
-	puertoPanel := flag.Int("puerto-panel", 7071, "puerto local del panel de control")
+	puerto := flag.Int("puerto", 7575, "puerto del servidor (PC controlada)")
+	puertoPanel := flag.Int("puerto-panel", 7576, "puerto local del panel de control")
 	clave := flag.String("clave", "", "clave de acceso fija (si se omite: clave.txt junto al .exe, o una aleatoria)")
 	flag.Parse()
 
@@ -176,6 +176,14 @@ func iniciarServidor(puerto int, clave string) {
 	mux.HandleFunc("GET /api/stream", s.stream)
 	mux.HandleFunc("POST /api/entrada", s.entrada)
 
+	// Se escucha en exclusiva: si otro programa ya usa el puerto, se avisa en vez
+	// de compartirlo en silencio (y que las conexiones le lleguen al otro).
+	ln, err := escucharExclusivo(fmt.Sprintf(":%d", puerto))
+	if err != nil {
+		avisoPuertoOcupado(puerto, err)
+		return
+	}
+
 	ancho, alto := tamanoPantalla()
 	nombre, _ := os.Hostname()
 	fmt.Println()
@@ -198,15 +206,23 @@ func iniciarServidor(puerto int, clave string) {
 	fmt.Println("------------------------------------------")
 
 	srv := &http.Server{
-		Addr:              fmt.Sprintf(":%d", puerto),
 		Handler:           cabecerasSeguras(mux),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 		MaxHeaderBytes:    16 << 10,
 	}
-	if err := srv.ListenAndServe(); err != nil {
-		fmt.Println("ERROR al iniciar el servidor:", err)
+	if err := srv.Serve(ln); err != nil {
+		fmt.Println("ERROR en el servidor:", err)
 	}
+}
+
+// avisoPuertoOcupado explica qué hacer cuando otro programa ya usa el puerto.
+func avisoPuertoOcupado(puerto int, err error) {
+	fmt.Println()
+	fmt.Printf("ERROR: no se pudo usar el puerto %d (%v).\n", puerto, err)
+	fmt.Println("Otro programa lo está usando (por ejemplo AnyDesk usa el 7070).")
+	fmt.Println("Cerrá ese programa o usá otro puerto, por ejemplo:")
+	fmt.Printf("   conexion-remota.exe -puerto %d\n", puerto+10)
 }
 
 func ipCliente(r *http.Request) string {
@@ -429,9 +445,9 @@ func iniciarPanel(puerto int) {
 	})
 	// Solo escucha en esta PC: el panel no se expone a la red.
 	dir := fmt.Sprintf("127.0.0.1:%d", puerto)
-	ln, err := net.Listen("tcp", dir)
+	ln, err := escucharExclusivo(dir)
 	if err != nil {
-		fmt.Println("ERROR al abrir el panel:", err)
+		avisoPuertoOcupado(puerto, err)
 		return
 	}
 	url := "http://" + dir + "/"

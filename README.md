@@ -49,10 +49,10 @@ La primera vez que compartís una PC, Windows pregunta por el Firewall. Marcá
 ## Opciones (línea de comandos, opcional)
 
 ```
-conexion-remota.exe -modo servidor            # compartir esta PC (puerto 7070)
+conexion-remota.exe -modo servidor            # compartir esta PC (puerto 7575)
 conexion-remota.exe -modo panel               # abrir el panel de control
 conexion-remota.exe -modo ambos               # compartir y controlar
-  -puerto 7070        puerto del servidor
+  -puerto 7575        puerto del servidor
   -clave MiClave      fija la clave (si no, usa clave.txt o una aleatoria)
 ```
 
@@ -65,7 +65,7 @@ clave adentro.
 - El **panel** de control solo escucha en `127.0.0.1` (no se expone a la red).
 - **Por internet usá Tailscale**: así el tráfico va cifrado y solo tus equipos se
   ven entre sí. La app en sí manda los datos sin cifrar, por eso **no** conviene
-  abrir el puerto 7070 directo a internet; dejá que Tailscale (o tu LAN de
+  abrir el puerto 7575 directo a internet; dejá que Tailscale (o tu LAN de
   confianza) sea el único camino.
 
 ## Compilar desde el código (solo si querés rehacer el `.exe`)
